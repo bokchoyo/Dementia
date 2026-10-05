@@ -6,3 +6,8 @@ stanza==1.7.0
 tokenizers==0.15.2
 transformers==4.35.2
 tqdm==4.64.1
+
+# Missing direct dependencies added for training and tuning plots.
+# Versions observed in the local project environment, not a historical run lock.
+torch==2.13.0
+matplotlib==3.10.9

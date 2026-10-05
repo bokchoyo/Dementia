@@ -1,0 +1,33 @@
+{
+  "participant_key": "(normalized source_group, patient_id); verify IDs persist across visits",
+  "files": [
+    {
+      "file": "all_test_parsed_filtered_inference_ready.jsonl",
+      "sha256": "da28b57d81f894ec6447d3e7c0ee01790df578987cfc5e55d4c350bc4fe35164",
+      "records": 2222,
+      "labels": {
+        "control": 1378,
+        "patient": 844
+      },
+      "topics": {
+        "Cat": 328,
+        "Cinderella": 330,
+        "Cinderella_Intro": 326,
+        "Cookie": 329,
+        "Rockwell": 331,
+        "Sandwich": 330,
+        "Sandwich_Favorite": 124,
+        "Tea": 124
+      },
+      "participants_by_cohort_and_patient_id": 330,
+      "participants_by_patient_id_alone": 330,
+      "missing_patient_id": 0,
+      "empty_sentences": 0,
+      "duplicate_record_ids": 0,
+      "score_values": {
+        "low": 2222
+      }
+    }
+  ],
+  "split_overlap": []
+}

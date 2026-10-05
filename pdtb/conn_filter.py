@@ -8,7 +8,7 @@ import re
 import math
 
 import nltk
-nltk.data.path.append("/hits/basement/nlp/liuwi/resources/nltk")
+# NLTK uses its standard search path or the NLTK_DATA environment variable.
 from tqdm import tqdm, trange
 from multiprocessing import Process
 from nltk import word_tokenize
