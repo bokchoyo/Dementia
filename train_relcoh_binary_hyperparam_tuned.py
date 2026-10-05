@@ -151,6 +151,121 @@ except ImportError:
 from utils import labels_from_file
 
 
+class EnhancedFrozenCoherenceBinaryClassifier(nn.Module):
+    """
+    Patient/control classifier stacked on a frozen coherence model.
+
+    The binary head uses:
+      [last hidden representation from frozen coherence model,
+       frozen coherence softmax probabilities]
+
+    Unlike older wrapper versions, this class supports class-weighted binary
+    CrossEntropyLoss, which helps avoid majority-class collapse.
+    """
+    def __init__(self, coherence_model, args):
+        super(EnhancedFrozenCoherenceBinaryClassifier, self).__init__()
+        self.coherence_model = coherence_model
+        for param in self.coherence_model.parameters():
+            param.requires_grad = False
+        self.coherence_model.eval()
+
+        self.num_labels = int(getattr(args, "num_labels", 2))
+        self.coherence_num_labels = int(getattr(self.coherence_model, "num_labels", 3))
+        if hasattr(self.coherence_model, "feature_dim"):
+            self.feature_dim = int(self.coherence_model.feature_dim)
+        else:
+            self.feature_dim = int(self.coherence_model.classifier.in_features)
+        self.binary_input_dim = self.feature_dim + self.coherence_num_labels
+
+        hidden_size = int(getattr(args, "binary_head_hidden_size", 128))
+        if hidden_size <= 0:
+            hidden_size = max(16, self.binary_input_dim // 2)
+
+        dropout_p = float(getattr(args, "dropout", 0.1))
+        self.binary_classifier = nn.Sequential(
+            nn.Dropout(dropout_p),
+            nn.Linear(self.binary_input_dim, hidden_size),
+            nn.ReLU(),
+            nn.Dropout(dropout_p),
+            nn.Linear(hidden_size, self.num_labels),
+        )
+        self._init_binary_head()
+
+        class_weights = getattr(args, "binary_class_weights", None)
+        if class_weights is not None:
+            class_weights = torch.tensor(class_weights, dtype=torch.float)
+            if class_weights.numel() != self.num_labels:
+                raise ValueError(
+                    f"binary_class_weights length {class_weights.numel()} does not match num_labels {self.num_labels}"
+                )
+            self.register_buffer("binary_class_weights", class_weights)
+        else:
+            self.binary_class_weights = None
+
+    def _init_binary_head(self):
+        for module in self.binary_classifier.modules():
+            if isinstance(module, nn.Linear):
+                module.weight.data.normal_(mean=0.0, std=0.02)
+                if module.bias is not None:
+                    module.bias.data.zero_()
+
+    def train(self, mode=True):
+        super(EnhancedFrozenCoherenceBinaryClassifier, self).train(mode)
+        self.coherence_model.eval()
+        return self
+
+    def _extract_features(self, sent_vectors=None, sent_mask=None, doc_vectors=None):
+        self.coherence_model.eval()
+        with torch.no_grad():
+            if hasattr(self.coherence_model, "extract_features"):
+                if doc_vectors is not None:
+                    hidden, coherence_logits, coherence_probs = self.coherence_model.extract_features(doc_vectors=doc_vectors)
+                else:
+                    hidden, coherence_logits, coherence_probs = self.coherence_model.extract_features(
+                        sent_vectors=sent_vectors, sent_mask=sent_mask
+                    )
+            elif doc_vectors is not None:
+                if doc_vectors.dtype == torch.bfloat16:
+                    doc_vectors = doc_vectors.float()
+                features = self.coherence_model.dropout(doc_vectors)
+                features = features.float()
+                features = self.coherence_model.fc1(features)
+                features = self.coherence_model.dropout(features)
+                hidden = self.coherence_model.fc2(features)
+                classifier_input = self.coherence_model.dropout(hidden)
+                coherence_logits = self.coherence_model.classifier(classifier_input)
+                coherence_probs = torch.softmax(coherence_logits, dim=-1)
+            else:
+                if sent_vectors.dtype == torch.bfloat16:
+                    sent_vectors = sent_vectors.float()
+                sent_vectors = self.coherence_model.proj(sent_vectors)
+                input_vectors = self.coherence_model.abs_position_embedding(sent_vectors)
+                output = self.coherence_model.transformer(input_vectors, sent_mask)
+                output = self.coherence_model.dropout(output)
+                hidden = self.coherence_model.fc(output)
+                classifier_input = self.coherence_model.dropout(hidden)
+                coherence_logits = self.coherence_model.classifier(classifier_input)
+                coherence_probs = torch.softmax(coherence_logits, dim=-1)
+        return hidden.detach(), coherence_logits.detach(), coherence_probs.detach()
+
+    def forward(self, sent_vectors=None, sent_mask=None, doc_vectors=None, labels=None, flag="Train", **kwargs):
+        hidden, coherence_logits, coherence_probs = self._extract_features(
+            sent_vectors=sent_vectors, sent_mask=sent_mask, doc_vectors=doc_vectors
+        )
+        binary_features = torch.cat([hidden.float(), coherence_probs.float()], dim=-1)
+        binary_logits = self.binary_classifier(binary_features)
+        binary_probs = torch.softmax(binary_logits, dim=-1)
+        _, preds = torch.max(binary_logits, dim=-1)
+
+        outputs = (preds, binary_logits, binary_probs, coherence_probs)
+        if flag.upper() == "TRAIN":
+            loss_fct = nn.CrossEntropyLoss(
+                ignore_index=-1,
+                weight=self.binary_class_weights if self.binary_class_weights is not None else None,
+            )
+            loss = loss_fct(binary_logits.view(-1, self.num_labels), labels.view(-1))
+            outputs = (loss,) + outputs
+        return outputs
 
 
 
@@ -162,7 +277,7 @@ logger.setLevel(logging.WARNING)
 BASIC_FORMAT = "%(asctime)s:%(levelname)s: %(message)s"
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 formatter = logging.Formatter(BASIC_FORMAT, DATE_FORMAT)
-chlr = logging.StreamHandler()  # handler
+chlr = logging.StreamHandler()  # 输出到控制台的handler
 chlr.setFormatter(formatter)
 logger.addHandler(chlr)
 
@@ -253,6 +368,10 @@ def get_argparse():
                         help="Field used for per-topic 80/20 dementia splitting. Falls back to topic, then unknown.")
     parser.add_argument("--binary_metric", default="f1", choices=["acc", "f1"],
                         help="Metric for selecting the binary head checkpoint when a binary dev split is used. Default f1 avoids majority-class selection.")
+    parser.add_argument("--binary_loss_weighting", default="balanced", choices=["none", "balanced"],
+                        help="Use inverse-frequency class weights for the binary loss. Default balanced helps prevent all-control collapse.")
+    parser.add_argument("--binary_class_weight_power", default=1.0, type=float,
+                        help="Power applied to balanced class weights. 1.0 = full inverse-frequency weighting; 0.5 = milder weighting.")
     parser.add_argument("--binary_head_hidden_size", default=128, type=int,
                         help="Hidden size of the new binary classifier head.")
     parser.add_argument("--do_binary_hyperparameter_tune", default=False, action="store_true",
@@ -1312,6 +1431,29 @@ def resolve_coherence_checkpoint(args, selected_checkpoint=""):
 
 
 
+def compute_binary_class_weights_from_file(train_file, binary_label_list, power=1.0):
+    """
+    Return inverse-frequency class weights in label-list order.
+    Formula before power: total / (num_classes * class_count).
+    """
+    records = load_json_records(train_file)
+    labels = [str(record.get("score", "")).lower().strip() for record in records]
+    from collections import Counter
+    counts = Counter(labels)
+    total = sum(counts.get(label, 0) for label in binary_label_list)
+    if total <= 0:
+        return None, counts
+
+    weights = []
+    num_classes = len(binary_label_list)
+    for label in binary_label_list:
+        count = counts.get(label, 0)
+        if count <= 0:
+            # Avoid inf; this will also make the missing class obvious in the printed counts.
+            weights.append(1.0)
+        else:
+            weights.append((total / float(num_classes * count)) ** float(power))
+    return weights, counts
 
 
 def print_binary_train_label_summary(train_file, binary_label_list):
@@ -1601,12 +1743,16 @@ def train_binary_head_for_lr_tuning(args, dataset_params, coherence_checkpoint, 
     binary_args.progress_desc = f"Binary tune lr={learning_rate:g}"
     os.makedirs(binary_args.output_dir, exist_ok=True)
 
-    from collections import Counter
-    label_counts = Counter(
-        str(record.get("score", "")).lower().strip()
-        for record in load_json_records(train_ready_file)
-    )
-    print("Using unweighted binary CrossEntropyLoss.")
+    if getattr(args, "binary_loss_weighting", "balanced") == "balanced":
+        class_weights, label_counts = compute_binary_class_weights_from_file(
+            train_ready_file,
+            binary_label_list,
+            power=float(getattr(args, "binary_class_weight_power", 1.0)),
+        )
+        binary_args.binary_class_weights = class_weights
+    else:
+        label_counts = {}
+        binary_args.binary_class_weights = None
 
     binary_model = build_frozen_binary_model(args, coherence_checkpoint, binary_args)
     binary_dataset_params = dict(dataset_params)
@@ -1809,7 +1955,7 @@ def build_frozen_binary_model(args, coherence_checkpoint, binary_args):
     for param in coherence_model.parameters():
         param.requires_grad = False
     coherence_model.eval()
-    return FrozenCoherenceBinaryClassifier(coherence_model, binary_args).to(args.device)
+    return EnhancedFrozenCoherenceBinaryClassifier(coherence_model, binary_args).to(args.device)
 
 
 def train_binary_classifier(args, dataset_params, selected_coherence_checkpoint=""):
@@ -1825,7 +1971,19 @@ def train_binary_classifier(args, dataset_params, selected_coherence_checkpoint=
     binary_dataset_params["label_list"] = binary_label_list
 
     print_binary_train_label_summary(train_ready_file, binary_label_list)
-    print("Using unweighted binary CrossEntropyLoss.")
+    if getattr(args, "binary_loss_weighting", "balanced") == "balanced":
+        class_weights, label_counts = compute_binary_class_weights_from_file(
+            train_ready_file,
+            binary_label_list,
+            power=float(getattr(args, "binary_class_weight_power", 1.0)),
+        )
+        binary_args.binary_class_weights = class_weights
+        print("\nUsing balanced binary loss weights:")
+        for label, weight in zip(binary_label_list, class_weights):
+            print(f"  {label}: weight={float(weight):.4f}, train_count={int(label_counts.get(label, 0))}")
+    else:
+        binary_args.binary_class_weights = None
+        print("\nUsing unweighted binary CrossEntropyLoss.")
 
     binary_model = build_frozen_binary_model(args, coherence_checkpoint, binary_args)
     trainable_params = sum(p.numel() for p in binary_model.parameters() if p.requires_grad)
