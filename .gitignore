@@ -6,9 +6,3 @@ __pycache__/
 
 data/
 embeddings/
-
-# Generated experiment artifacts (reported aggregate results are versioned).
-outputs/
-runs/
-**/fast_sent_vectors/
-.pytest_cache/

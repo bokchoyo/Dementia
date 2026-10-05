@@ -31,7 +31,20 @@ from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM, AutoMo
 from dataset import SentDataset
 from model import SentTransformer, BaseClassifer
 
-# See docs/REPRODUCING.md and scripts/run_experiment.py for portable commands.
+# Command:
+# python train_relcoh_binary_hyperparam_tuned.py `
+#   --do_binary_test `
+#   --do_binary_train `
+#   --do_binary_hyperparameter_tune `
+#   --binary_train_file "C:\Users\bokch\PyCharm\Dimentia\data\dataset\dimentia\all_test_parsed_filtered_inference_ready.jsonl" `
+#   --checkpoint_file "C:\Users\bokch\PyCharm\Dimentia\data\result\gcdc\model\checkpoint_4\pytorch_model.bin" `
+#   --output_dir "data\result\dementia" `
+#   --model_type transformer_sent `
+#   --model_name_or_path roberta-base `
+#   --label_list "low,medium,high" `
+#   --binary_label_list "control,patient" `
+#   --binary_num_train_epochs 30 `
+#   --binary_tune_learning_rates "1e-5,3e-5,1e-4,3e-4,1e-3"
 
 try:
     from model import FrozenCoherenceBinaryClassifier
@@ -294,7 +307,7 @@ def get_argparse():
     parser.add_argument("--do_train", default=False, action="store_true")
     parser.add_argument("--do_dev", default=False, action="store_true")
     parser.add_argument("--do_test", default=False, action="store_true")
-    parser.add_argument("--test_file", default=r"data/dataset/dimentia/all_test_parsed_filtered_inference_ready.jsonl", type=str)
+    parser.add_argument("--test_file", default=r"C:\Users\bokch\PyCharm\RelCoh\data\dataset\dimentia\all_test.jsonl", type=str)
     parser.add_argument("--prediction_output_file", default="", type=str)
     parser.add_argument("--checkpoint_file", default="", type=str)
     parser.add_argument("--train_batch_size", default=32, type=int)
@@ -311,7 +324,7 @@ def get_argparse():
     parser.add_argument("--seed", default=106524, type=int, help="random seed")
     parser.add_argument(
         "--train_file",
-        default=r"data/dataset/gcdc/combined/1/train_full.json",
+        default=r"C:\Users\bokch\PyCharm\RelCoh\data\dataset\gcdc\combined\1\train_full.json",
         type=str,
         help="training json/jsonl file"
     )
@@ -2256,10 +2269,12 @@ def main():
     args.num_labels = len(label_list)
 
     # args.embed_file = os.path.join(
+    #     "/hits/basement/nlp/liuwi/resources/embeddings",
     #     args.embed_file
     # )
     #
     # ## 2. define models
+    # args.model_name_or_path = os.path.join("/hits/basement/nlp/liuwi/resources/pretrained_models", args.model_name_or_path)
     config = AutoConfig.from_pretrained(args.model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
     if tokenizer.pad_token is None:

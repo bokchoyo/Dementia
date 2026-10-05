@@ -71,7 +71,7 @@ def parse_doc(input_doc, parse_params):
 
     ## 1. split doc into sents, and judge if sent has connectives or not
     if use_stanza:
-        stanza_dir = os.environ.get("STANZA_RESOURCES_DIR", os.path.expanduser("~/stanza_resources"))
+        stanza_dir = "/hits/basement/nlp/liuwi/resources/stanza_resources"
         stanza_nlp = stanza.Pipeline(lang='en', processors='tokenize', dir=stanza_dir, download_method=None)
         doc_sents = split_into_sentences_stanza(input_doc, stanza_nlp)
     else:
