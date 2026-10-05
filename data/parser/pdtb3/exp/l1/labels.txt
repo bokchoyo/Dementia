@@ -1,0 +1,15 @@
+Asynchronous
+Cause
+Concession
+Condition
+Conjunction
+Contrast
+Disjunction
+Instantiation
+Level-of-detail
+Manner
+Negative-condition
+Purpose
+Similarity
+Substitution
+Synchronous

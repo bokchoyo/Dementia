@@ -1,0 +1,15 @@
+Concession
+Contrast
+Cause
+Cause+Belief
+Condition
+Purpose
+Conjunction
+Equivalence
+Instantiation
+Level-of-detail
+Manner
+Substitution
+Asynchronous
+Synchronous
+NoRel
